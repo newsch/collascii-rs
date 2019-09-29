@@ -1,0 +1,9 @@
+## Project-Related
+*.txt
+
+## Rust-Related
+/target
+**/*.rs.bk
+
+## VS Code
+.vscode/
