@@ -4,9 +4,15 @@
 //! TODO: connect to canvas instance
 //! TODO: connect to server
 
+extern crate env_logger;
+extern crate log;
 extern crate pancurses;
 
+use log::{debug, info, log_enabled, trace};
+
 fn main() {
+    env_logger::init();
+    debug!("Starting");
     let window = pancurses::initscr();
 
     // CURSES CONFIG
@@ -23,6 +29,18 @@ fn main() {
         let (y, x) = window.get_cur_yx();
         // we can safely unwrap b/c window is not in nodelay mode
         let c = window.getch().unwrap();
+
+        // log key inputs
+        if log_enabled!(log::Level::Debug) {
+            let mut msg = format!("Input: {:?}", c);
+            // eprint!();
+            if let Character(ch) = c {
+                if let Some(name) = pancurses::keyname(ch as i32) {
+                    msg.push_str(&format!(" ({})", name));
+                }
+            }
+            debug!("{}", msg);
+        }
         match c {
             // move the cursor with arrow keys
             KeyRight | KeyLeft | KeyUp | KeyDown => {
@@ -44,15 +62,7 @@ fn main() {
                 window.mv(y, x);
             }
             // ignore everything else
-            _ => {
-                eprint!("Input character: {:?}", c);
-                if let Character(ch) = c {
-                    if let Some(name) = pancurses::keyname(ch as i32) {
-                        eprint!(" ({})", name);
-                    }
-                }
-                eprint!("\n");
-            }
+            _ => (),
         }
     }
 }
