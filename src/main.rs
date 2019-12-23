@@ -58,7 +58,7 @@ impl Interface {
         for y in min_y..max_y {
             for x in min_x..max_x {
                 self.window
-                    .mvaddch(y as i32, x as i32, self.canvas.get(x, y));
+                    .mvaddch(y as i32, x as i32, *self.canvas.get(x - min_x, y - min_y));
             }
         }
     }
