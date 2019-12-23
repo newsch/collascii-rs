@@ -38,6 +38,10 @@ impl Message {
             return Ok(Message::Quit);
         }
         let vals: Vec<&str> = line.split_ascii_whitespace().collect();
+
+        if vals.len() < 1 {
+            return Err(parse_error("Line has no content"));
+        }
         let prefix = vals[0];
 
         match prefix {
@@ -126,7 +130,7 @@ mod test {
             (Message::SetChar { y: 3, x: 2, c: 'a' }, "s 3 2 a"),
             (Message::SetChar { y: 1, x: 0, c: 'Z' }, "s 1 0 Z"),
             // Canvas
-            (Message::CanvasUpdate { c: c1 }, "c 2 3\nX1234 "),
+            (Message::CanvasUpdate { c: c1 }, "cs 2 3\nX1234 "),
             // Quit
             (Message::Quit, "q"),
         ];
@@ -134,20 +138,30 @@ mod test {
         // parse them individually
         for (expected, input) in msg_test_cases.iter() {
             let parsed = Message::from_reader(&mut input.as_bytes());
+            eprintln!("parsed: {:?}", parsed);
             assert!(parsed.is_ok());
             assert_eq!(expected, &parsed.unwrap());
         }
 
         // Concat all messages into a big stream and read it
-        let (expecteds, inputs): (Vec<_>, Vec<_>) = msg_test_cases.iter().cloned().unzip();
-        let blob = inputs.iter().fold(String::new(), |mut acc, input| {
-            acc.push('\n');
+        let blob = msg_test_cases.iter().fold(String::new(), |mut acc, (msg, input)| {
             acc.push_str(input);
+            // separate all commands by a newline, except for CanvasUpdate
+            // (which reads the exact number of remaining bytes)
+            match msg {
+                Message::CanvasUpdate{..} => (),
+                _ => {
+                acc.push('\n');
+                }
+            }
             acc
         });
+        let (expecteds, inputs): (Vec<_>, Vec<_>) = msg_test_cases.iter().cloned().unzip();
+        eprintln!("blob: {:?}", blob);
         let mut reader = blob.as_bytes();
         for expected in expecteds.iter() {
             let parsed = Message::from_reader(&mut reader);
+            eprintln!("parsed: {:?}", parsed);
             assert!(parsed.is_ok());
             assert_eq!(expected, &parsed.unwrap());
         }
