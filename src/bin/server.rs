@@ -15,7 +15,9 @@ extern crate structopt;
 use structopt::StructOpt;
 
 use collascii::canvas::Canvas;
-use collascii::network::Message;
+use collascii::network::{Message, Version};
+
+const PROTOCOL_VERSION: Version = Version::new(1,0);
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -89,8 +91,27 @@ fn handle_stream(
     clients: &Mutex<Clients>,
 ) -> io::Result<()> {
     // for each client:
-    // - start off by sending canvas
+    // - check protocol version
+    // - send canvas
     // - on message received, interpret, modify, and forward
+
+    let mut read_stream = io::BufReader::new(stream.try_clone().unwrap());
+
+    // protocol version negotiation
+    let version = {
+        let msg = Message::from_reader(&mut read_stream)?;
+        if let Message::VersionReq { v } = msg {
+            // set version
+            if v != PROTOCOL_VERSION {
+                stream.write_all(b"Unknown version\n")?;
+                panic!("Unknown version");
+            }
+            stream.write_fmt(format_args!("{}", Message::VersionAck))?;
+            v
+        } else {
+            panic!("Expected version statement");
+        }
+    };
 
     // send current canvas to new client
     {
@@ -99,18 +120,19 @@ fn handle_stream(
         stream.write_fmt(format_args!("{}", msg))?;
     }
 
-    let mut read_stream = io::BufReader::new(stream.try_clone().unwrap());
+    // main loop
     loop {
         let msg = Message::from_reader(&mut read_stream)?;
         debug!("Parsed message from input stream: {:?}", msg);
+        use Message::*;
         match msg {
-            Message::Quit => {
+            Quit => {
                 // stop and exit
                 clients.lock().unwrap().remove(uid);
                 info!("Client {} left", uid);
                 return Ok(());
             }
-            Message::SetChar { y, x, c } => {
+            SetChar { y, x, c } => {
                 // update canvas and broadcast to others
                 {
                     let mut canvas = canvas.lock().unwrap();
@@ -130,10 +152,11 @@ fn handle_stream(
                 clients.send(uid, format_args!("{}", msg))?;
                 debug!("Forwarded {:?} to other clients", msg);
             }
-            Message::CanvasUpdate { c: _ } => {
+            CanvasUpdate { c: _ } => {
                 // swap canvas, broadcast to others
                 unimplemented!()
             }
+            m => panic!("Unexpected message: {:?}", m) // TODO: move this to a result
         }
     }
 }
