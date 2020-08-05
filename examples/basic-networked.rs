@@ -42,7 +42,7 @@ fn main() {
         // look for acknowledgment
         let m = Message::from_reader(&mut reader)
             .expect("Couldn't parse protocol version acknowledgment");
-        if !matches!(m, Message::VersionReq{ .. }) {
+        if !matches!(m, Message::VersionAck) {
             panic!(
                 "Got a message that wasn't a version acknowledgment: {:?}",
                 m

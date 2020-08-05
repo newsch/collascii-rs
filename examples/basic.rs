@@ -1,7 +1,6 @@
 //! A quick example of a collascii-like curses interface.
 //!
 //! TODO: print debug messages to bottom of screen
-//! TODO: connect to server
 
 extern crate env_logger;
 extern crate log;
