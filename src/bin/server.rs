@@ -84,6 +84,9 @@ fn main() -> io::Result<()> {
     }
 }
 
+/// Manage a socket connection to the server.
+///
+/// Returns when the connection ends.
 fn handle_stream(
     uid: ClientUid,
     mut stream: TcpStream,
