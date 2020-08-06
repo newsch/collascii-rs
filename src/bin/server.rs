@@ -17,7 +17,7 @@ use structopt::StructOpt;
 use collascii::canvas::Canvas;
 use collascii::network::{Message, Version};
 
-const PROTOCOL_VERSION: Version = Version::new(1,0);
+const PROTOCOL_VERSION: Version = Version::new(1, 0);
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -116,7 +116,7 @@ fn handle_stream(
     // send current canvas to new client
     {
         let c = canvas.lock().unwrap();
-        let msg = Message::CanvasUpdate { c: c.clone() };
+        let msg = Message::CanvasSend { c: c.clone() };
         stream.write_fmt(format_args!("{}", msg))?;
     }
 
@@ -152,11 +152,11 @@ fn handle_stream(
                 clients.send(uid, format_args!("{}", msg))?;
                 debug!("Forwarded {:?} to other clients", msg);
             }
-            CanvasUpdate { c: _ } => {
+            CanvasSend { c: _ } => {
                 // swap canvas, broadcast to others
                 unimplemented!()
             }
-            m => panic!("Unexpected message: {:?}", m) // TODO: move this to a result
+            m => panic!("Unexpected message: {:?}", m), // TODO: move this to a result
         }
     }
 }

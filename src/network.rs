@@ -3,12 +3,11 @@ use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
+use std::io::{self, BufRead};
 use std::num::ParseIntError;
 use std::str::FromStr;
 
 use crate::canvas::Canvas;
-
-use std::io::{self, BufRead};
 
 #[derive(Debug, PartialEq)]
 pub enum ParseVersionError {
@@ -89,22 +88,114 @@ impl Display for Version {
 }
 
 /// A message sent between instances to modify a shared canvas.
+///
+/// To parse a message from a text/bytes source, use [`Message::from_reader`].
+/// Because byte arrays implement [`std::io::BufRead`], you can use them and strings directly:
+/// ```
+/// use collascii::network::Message;
+/// let source = "s 2 1 A\n";
+/// let msg = Message::from_reader(&mut source.as_bytes()).unwrap();
+/// assert_eq!(Message::SetChar{ x: 1, y: 2, c: 'A' }, msg);
+/// ```
+///
+/// The current canonical way to create a message is to `write_fmt!(format_args!("{}", msg))` it.
+///
+/// # The Network Protocol
+///
+/// This is meant to be the most canonical definition of the network protocol spec.
+///
+/// The initial version is informally defined by the C code of the [original collascii](https://github.com/olin/collascii), which this is meant to be backwards-compatible with.
+///
+/// To date, there are two version's of the protocol
+/// - an unnamed one that encompasses everything in 1.0 except for version negotiation, used by the original collascii
+/// - `1.0`: the protocol defined by this code and the loose spec below
+///
+/// ## Messages
+///
+/// - Messages are sent between clients and servers over TCP connections.
+/// - Messages are ascii text.
+/// - All messages end with a single newline character (`'\n'`).
+/// - [Some messages](Message::CanvasSend) contain multiple newline characters.
+/// - The first line of all messages should be should be enough to distinguish them and prepare to parse any remaining data.
+/// - The first line of messages are no more than 64 characters long, including the newline.
+/// - To remain forwards-compatible, servers should silently ignore messages with prefixes they do not recognize.
+/// - Clients may fail on unrecognized messages. Updates to the protocol that require breaking changes to client behavior will increment the protocol version.
+///
+/// Messages generally take the form:
+///
+/// `"<prefix> [<param>]...\n"`
+///
+/// where
+/// - The `<prefix>` is a short sequence of non-whitespace characters that vaguely represents the purpose of the message.
+/// - A `<param>` is a sequence of non-whitespace characters that holds some type of data for the message.
+/// - The `<prefix>` and any `<param>`s are separated from each other by a single space (` `).
+///
+/// For example, the [`Message::SetChar`] that sets the character at (1, 2) to `'A'` looks like `"s 2 1 A\n"`.
+///
+/// The `1.0` protocol looks like this:
+/// 1. Client opens TCP connection to server
+/// 2. Client sends a [`Message::VersionReq`] to server with it's expected protocol version.
+/// 3.
+///     - if server _does not_ support the requested protocol version, it **closes the connection**.
+///     - if server _does_ support the requested protocol version, it sends a [`Message::VersionAck`].
+/// 4. The server sends a [`Message::CanvasSend`] with the current contents.
+/// 5. From here on out:
+///     - server sends a [`Message::SetChar`] whenever a character is changed by another client
+///     - client sends a [`Message::SetChar`] to change a character on the server.
+/// 6. Client sends a [`Message::Quit`] and closes the connection.
+///
+/// When the connection is closed due to an error, the closing party may write a message explaining the reason why before closing.
+#[non_exhaustive]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Message {
-    /// Set a character in the canvas
+    /// Set a single character in the canvas
+    ///
+    /// Sent from a client _or_ from the server once communication is established.
+    /// A client sends it to change a character on the server's canvas, and the server sends it to the client when updated by another client.
+    ///
+    /// **Text format**: `"s <ypos> <xpos> <character>\n"`
+    ///
+    /// **Note**: if the character in question is space (`' '`), then the message will end with two spaces and a newline (`"...<xpos>  \n"`).
     SetChar { x: usize, y: usize, c: char },
+
     /// Replace the canvas
-    CanvasUpdate { c: Canvas },
-    // /// A new client has joined
-    // ClientJoined,
-    // /// A client has quit
-    // ClientQuit,
+    ///
+    /// Sent from the server to a client after negotiating versions.
+    ///
+    /// **Text format**: `"cs <width> <height>\n<canvasdata>\n"`
+    ///
+    /// where
+    /// - `<canvasdata>` is each row of the canvas concatenated together starting with the top row (`y = 0`), as outputted by [`Canvas::serialize`].
+    ///
+    /// NOTE: `<canvasdata>` will always be `width * height* characters long.
+    CanvasSend { c: Canvas },
+
     /// Request a protocol version to use
+    ///
+    /// **Text format**: `"v <version>...\n"`
+    ///
+    /// where
+    /// - `version` is of the form `<major>.<minor>`, where `<major>` and `<minor>` are positive integers.
+    ///
+    /// NOTE: Multiple versions in the request is reserved for future protocol versions.
+    /// Implementations for 1.0 should check only the first parameter and not check if more exist.
     VersionReq { v: Version },
+
     /// Acknowledge the version to use
-    /// Sent in response to a Protocol
+    ///
+    /// Sent from the server to a client in response to a [`Message::VersionReq`].
+    ///
+    /// **Text format**: `"vok [<version>]\n"`
+    ///
+    /// NOTE: Returning a version in the acknowledgement is reserved for future protocol versions.
+    /// Implementations for 1.0 should not check if parameters exist or not.
     VersionAck,
-    /// Exit message
+
+    /// Graceful exit message
+    ///
+    /// Sent from a client to a server before closing the connection.
+    ///
+    /// **Text format**: `"q\n"`
     Quit,
 }
 
@@ -126,66 +217,80 @@ impl Message {
             return Ok(Message::Quit);
         }
         // TODO: fix up the error handling here
-        // TODO: fix the numbering here - vals vs prefix
-        let vals: Vec<&str> = line.split_ascii_whitespace().collect(); // all of the items in the message, including the prefix
-        if (vals.len() == 0) {
+        let line = line
+            .strip_suffix('\n')
+            .ok_or(parse_error("No trailing newline"))?;
+        let vals: Vec<&str> = line.split(' ').collect(); // all of the items in the message, including the prefix
+        if vals.len() == 0 {
             return Err(parse_error("Line has no content"));
         }
         let prefix = vals[0];
-
+        let params = &vals[1..];
         match prefix {
             // SetChar
             "s" => {
-                if vals.len() != 4 {
+                if params.len() < 3 {
                     return Err(parse_error(&format!(
-                        "Expected 4 arguments for SetChar, got {}",
-                        vals.len()
+                        "Expected 3 parameters for SetChar, got {}",
+                        params.len()
                     )));
                 }
-                let y: usize = vals[1]
+                let y: usize = params[0]
                     .parse()
                     .map_err(|_| parse_error("Invalid y value"))?;
-                let x: usize = vals[2]
+                let x: usize = params[1]
                     .parse()
                     .map_err(|_| parse_error("Invalid x value"))?;
-                let c: char = vals[3]
-                    .parse()
-                    .map_err(|_| parse_error("Invalid c value"))?;
-                Ok(Message::SetChar { y, x, c })
-            }
-            // CanvasUpdate
-            "cs" => {
-                if vals.len() != 3 {
+                let c: char = match (params[2], params.get(3)) {
+                    ("", Some(&"")) => " ",
+                    (_c, None) => _c,
+                    (_, Some(_)) => return Err(parse_error("Invalid c value")),
+                }
+                .parse()
+                .map_err(|_| parse_error("Invalid c value"))?;
+                if c != ' ' && c.is_ascii_whitespace() {
                     return Err(parse_error(&format!(
-                        "Expected 4 arguments for CanvasUpdate, got {}",
-                        vals.len()
+                        "Invalid whitespace for c value: {:?}",
+                        c
                     )));
                 }
-                let height: usize = vals[1]
+                Ok(Message::SetChar { y, x, c })
+            }
+            // CanvasSend
+            "cs" => {
+                if params.len() != 2 {
+                    return Err(parse_error(&format!(
+                        "Expected 2 parameters for CanvasSend, got {}",
+                        params.len()
+                    )));
+                }
+                let height: usize = params[0]
                     .parse()
                     .map_err(|_| parse_error("Invalid height value"))?;
-                let width: usize = vals[2]
+                let width: usize = params[1]
                     .parse()
                     .map_err(|_| parse_error("Invalid width value"))?;
                 let mut canvas = Canvas::new(width, height);
                 // load data into canvas
-                let bytes_to_read = width * height;
-                let mut buf = vec![0u8; bytes_to_read];
-                source.read_exact(&mut buf);
-                let buf = String::from_utf8(buf)
-                    .map_err(|e| parse_error(&format!("Couldn't parse canvas contents: {}", e)))?;
+                // all characters for canvas plus newline
+                let bytes_to_read = width * height + 1;
+                let mut buf = String::with_capacity(bytes_to_read);
+                source
+                    .read_line(&mut buf)
+                    .expect("Error reading from server");
+                // this won't error out if more characters are read - any extra data will be dropped
                 canvas.insert(&buf);
-                Ok(Message::CanvasUpdate { c: canvas })
+                Ok(Message::CanvasSend { c: canvas })
             }
             // VersionReq
             "v" => {
-                if vals.len() == 1 {
+                if params.len() < 1 {
                     return Err(parse_error(&format!(
-                        "Expected 2 arguments for ProtocolVersionReq, got {}",
-                        vals.len()
+                        "Expected 1 parameter for ProtocolVersionReq, got {}",
+                        params.len()
                     )));
                 }
-                let version = vals[1];
+                let version = params[0];
                 let version = version
                     .parse::<Version>()
                     .map_err(|e| parse_error(&format!("Couldn't parse version: {}", e)))?;
@@ -211,9 +316,7 @@ impl fmt::Display for Message {
         use Message::*;
         match self {
             SetChar { y, x, c } => writeln!(f, "s {} {} {}", y, x, c)?,
-            CanvasUpdate { c } => {
-                writeln!(f, "cs {} {} \n{}", c.height(), c.width(), c.serialize())?
-            }
+            CanvasSend { c } => writeln!(f, "cs {} {}\n{}", c.height(), c.width(), c.serialize())?,
             VersionReq { v } => writeln!(f, "v {}", v)?,
             VersionAck => writeln!(f, "vok")?,
             Quit => writeln!(f, "q")?,
@@ -230,7 +333,7 @@ mod test {
 
     /// Check parsing of individual messages
     #[test]
-    fn parse() {
+    fn parse_good() {
         use Message::*;
         // good test cases
         let mut c1 = Canvas::new(3, 2);
@@ -239,17 +342,25 @@ mod test {
             // SetChar
             (SetChar { y: 3, x: 2, c: 'a' }, "s 3 2 a\n"),
             (SetChar { y: 1, x: 0, c: 'Z' }, "s 1 0 Z\n"),
+            (SetChar { y: 1, x: 0, c: ' ' }, "s 1 0  \n"),
             // Canvas
-            (CanvasUpdate { c: c1 }, "cs 2 3\nX1234 "),
+            (CanvasSend { c: c1 }, "cs 2 3\nX1234 \n"),
             // VersionReq
             (
                 VersionReq {
-                    v: Version::new(2, 3),
+                    v: Version::new(1, 0),
                 },
-                "v 2.3\n",
+                "v 1.0\n",
             ),
-            // VersionReq
+            (
+                VersionReq {
+                    v: Version::new(1, 0),
+                },
+                "v 1.0 1.1 1.2\n",
+            ),
+            // VersionAck
             (VersionAck, "vok\n"),
+            (VersionAck, "vok 1.1\n"),
             // Quit
             (Quit, "q\n"),
         ];
@@ -276,6 +387,22 @@ mod test {
             eprintln!("parsed: {:?}", parsed);
             assert!(parsed.is_ok());
             assert_eq!(expected, &parsed.unwrap());
+        }
+    }
+
+    #[test]
+    fn parse_bad() {
+        let bad_cases = [
+            ("s 1 0 \n", "SetChar: whitespace but no character"),
+            ("s 1 0  f\n", "SetChar: two spaces before character"),
+            ("s 1 0 \t\n", "SetChar: tab character"),
+            ("s 1 0 f\r", "return character only"),
+            ("s 1 0 f\r\n", "return and newline characters"),
+            ("s 1 0 f", "no newline"),
+        ];
+        for (case, description) in bad_cases.iter() {
+            let result = Message::from_reader(&mut case.as_bytes());
+            assert!(result.is_err(), *description);
         }
     }
 }
