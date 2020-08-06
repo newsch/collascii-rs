@@ -102,7 +102,7 @@ fn draw_canvas(c: &Canvas, window: &pancurses::Window) {
     let max_y = min(c.height(), win_height as usize + 1);
     for x in 0..max_x {
         for y in 0..max_y {
-            window.mvaddch(y as i32, x as i32, c.get(x, y));
+            window.mvaddch(y as i32, x as i32, *c.get(x, y));
         }
     }
 }
