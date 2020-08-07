@@ -8,7 +8,7 @@ extern crate pancurses;
 
 use collascii::canvas::Canvas;
 
-use log::{debug, info, log_enabled, trace};
+use log::{debug, log_enabled};
 use std::cmp::{max, min};
 
 fn main() {

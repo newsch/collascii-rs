@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, prelude::*, BufReader};
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::io::{self, prelude::*};
+use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -101,7 +100,7 @@ fn handle_stream(
     let mut read_stream = io::BufReader::new(stream.try_clone().unwrap());
 
     // protocol version negotiation
-    let version = {
+    let _version = {
         let msg = Message::from_reader(&mut read_stream)?;
         if let Message::VersionReq { v } = msg {
             // set version
@@ -181,7 +180,7 @@ impl Clients {
 
     /// Send a message to all clients
     pub fn broadcast(&mut self, msg: fmt::Arguments) -> io::Result<()> {
-        for (uid, stream) in self.list.iter_mut() {
+        for (_uid, stream) in self.list.iter_mut() {
             stream.write_fmt(msg)?
         }
         Ok(())
