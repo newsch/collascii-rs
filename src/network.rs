@@ -206,7 +206,7 @@ impl Message {
         R: BufRead,
     {
         let mut line = String::new();
-        let size = source.read_line(&mut line)?;
+        let _size = source.read_line(&mut line)?;
         let parse_error = |msg: &str| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -374,12 +374,12 @@ mod test {
         }
 
         // Concat all messages into a big stream and read it
-        let (expecteds, inputs): (Vec<_>, Vec<_>) = msg_test_cases.iter().cloned().unzip();
+        let (_expecteds, inputs): (Vec<_>, Vec<_>) = msg_test_cases.iter().cloned().unzip();
         let blob = inputs.iter().fold(String::new(), |mut acc, input| {
             acc.push_str(input);
             acc
         });
-        let (expecteds, inputs): (Vec<_>, Vec<_>) = msg_test_cases.iter().cloned().unzip();
+        let (expecteds, _inputs): (Vec<_>, Vec<_>) = msg_test_cases.iter().cloned().unzip();
         eprintln!("blob: {:?}", blob);
         let mut reader = blob.as_bytes();
         for expected in expecteds.iter() {

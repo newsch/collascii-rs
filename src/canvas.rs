@@ -303,14 +303,14 @@ mod test {
         let mut large = Canvas::new(3, 3);
         assert_eq!(8, large.insert(s));
         let coords = [('A', 0, 0), ('C', 2, 0), ('H', 1, 2), (' ', 2, 2)];
-        for &(c, x, y) in coords.into_iter() {
+        for &(c, x, y) in coords.iter() {
             assert_eq!(&c, large.get(x, y), "wrong value at ({}, {})", x, y)
         }
 
         let mut just_right = Canvas::new(4, 2);
         assert_eq!(8, just_right.insert(s));
         let coords = [('A', 0, 0), ('C', 2, 0), ('H', 3, 1)];
-        for &(c, x, y) in coords.into_iter() {
+        for &(c, x, y) in coords.iter() {
             assert_eq!(&c, just_right.get(x, y), "wrong value at ({}, {})", x, y)
         }
     }

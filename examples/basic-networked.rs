@@ -10,11 +10,11 @@ use collascii::canvas::Canvas;
 use collascii::network::{Message, Version};
 
 use std::cmp::{max, min};
-use std::io::{self, BufRead, BufReader, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::io::{self, BufReader, Write};
+use std::net::TcpStream;
 use std::time::Duration;
 
-use log::{debug, info, log_enabled, trace};
+use log::{debug, log_enabled};
 
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
 const HOST: &str = "localhost";
