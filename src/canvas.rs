@@ -261,7 +261,7 @@ impl From<&str> for Canvas {
 
 impl Canvas {
     /// Get the characters of the canvas as a string, with line endings after each row.
-    fn as_str(&self) -> String {
+    pub fn as_str(&self) -> String {
         let mut s = String::with_capacity(self.width() + 1 * self.height());
         for y in 0..self.height() {
             for x in 0..self.width() {

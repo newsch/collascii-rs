@@ -5,16 +5,13 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-extern crate log;
+use anyhow;
+use env_logger;
 use log::{debug, info, warn};
-
-extern crate env_logger;
-
-extern crate structopt;
 use structopt::StructOpt;
 
 use collascii::canvas::Canvas;
-use collascii::network::{Message, Version};
+use collascii::network::{Message, Version, DEFAULT_PORT};
 
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
 
@@ -34,7 +31,7 @@ struct Opt {
     height: usize,
 
     /// Port to listen on
-    #[structopt(short, long, default_value = "5000")]
+    #[structopt(short, long, default_value = DEFAULT_PORT)]
     port: u16,
 
     /// IP/hostname to listen on
@@ -42,7 +39,7 @@ struct Opt {
     host: String,
 }
 
-fn main() -> io::Result<()> {
+fn main() -> anyhow::Result<()> {
     {
         // init logging
         let mut builder = env_logger::Builder::from_default_env();
@@ -131,7 +128,6 @@ fn handle_stream(
             Quit => {
                 // stop and exit
                 clients.lock().unwrap().remove(uid);
-                info!("Client {} left", uid);
                 return Ok(());
             }
             SetChar { y, x, c } => {

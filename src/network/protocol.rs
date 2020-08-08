@@ -1,11 +1,18 @@
-use std::io::{BufRead, Write};
+use std::io::{self, BufRead, Write};
+
+use thiserror::Error;
 
 use crate::canvas::Canvas;
 use crate::network::{Message, Version};
 
+pub const DEFAULT_PORT: &str = "45011";
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
 
-pub enum ProtocolError {}
+#[derive(Error, Debug)]
+pub enum ProtocolError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
 
 pub trait Client: BufRead + Write + Sized {
     fn init_connection(&mut self) -> Result<Canvas, ProtocolError> {
