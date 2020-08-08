@@ -6,7 +6,8 @@ edition = "2018"
 
 [dependencies]
 pancurses = "*"
-# cursive = "*"
 log = "*"
 env_logger = "*"
 structopt = "*"
+thiserror = "1.*"
+anyhow = "1.*"
