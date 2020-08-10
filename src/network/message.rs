@@ -1,5 +1,4 @@
 //! Network protocol-related structures
-use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -8,38 +7,20 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 
 use crate::canvas::Canvas;
+use thiserror::Error;
 
-#[derive(Debug, PartialEq)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ParseVersionError {
+    #[error("No major version found")]
     NoMajor,
+    #[error("No minor version found")]
     NoMinor,
+    #[error("Unexpected extra content: {0:?}")]
     ExtraStuff(String),
-    MajorParseError(ParseIntError),
-    MinorParseError(ParseIntError),
-}
-
-impl Display for ParseVersionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        use ParseVersionError::*;
-        match self {
-            NoMajor => write!(f, "Empty string"),
-            NoMinor => write!(f, "Cannot split version"),
-            ExtraStuff(s) => write!(f, "Unexpected extra info: {:?}", s),
-            MajorParseError(e) => write!(f, "Cannot parse major: {}", e),
-            MinorParseError(e) => write!(f, "Cannot parse minor: {}", e),
-        }
-    }
-}
-
-impl Error for ParseVersionError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        use ParseVersionError::*;
-        match self {
-            MajorParseError(e) => Some(e),
-            MinorParseError(e) => Some(e),
-            _ => None,
-        }
-    }
+    #[error("Cannot parse major version")]
+    MajorParseError(#[source] ParseIntError),
+    #[error("Cannot parse minor version")]
+    MinorParseError(#[source] ParseIntError),
 }
 
 /// A major.minor version
