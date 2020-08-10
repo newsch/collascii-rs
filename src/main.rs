@@ -1,3 +1,4 @@
+#[warn(dead_code)]
 use std::io;
 
 extern crate pancurses;
