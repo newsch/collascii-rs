@@ -27,10 +27,10 @@ pub enum ParseVersionError {
 /// ```
 /// use collascii::network::Version;
 /// assert_eq!("1.2".parse::<Version>(), Ok(Version::new(1,2)));
-/// assert!(matches!("1".parse::<Version>(), Err(_)));
-/// assert!(matches!(".1".parse::<Version>(), Err(_)));
-/// assert!(matches!("foo".parse::<Version>(), Err(_)));
-/// assert!(matches!("foo".parse::<Version>(), Err(_)));
+/// assert!("1".parse::<Version>().is_err());
+/// assert!(".1".parse::<Version>().is_err());
+/// assert!("foo".parse::<Version>().is_err());
+/// assert!("foo".parse::<Version>().is_err());
 /// ```
 #[derive(Debug, PartialEq, Clone)]
 pub struct Version {
