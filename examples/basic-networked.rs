@@ -52,7 +52,7 @@ fn main() {
         let m = Message::from_reader(&mut reader).expect("Couldn't parse canvas data");
 
         match m {
-            Message::CanvasSend { c: canvas } => canvas,
+            Message::CanvasSet { c: canvas } => canvas,
             _ => panic!("Got a message that wasn't a canvas update: {:?}", m),
         }
     };
@@ -97,7 +97,7 @@ fn main() {
             Ok(_) => {
                 let m = Message::from_reader(&mut reader);
                 match m {
-                    Ok(Message::SetChar { x, y, c }) => {
+                    Ok(Message::CharSet { x, y, c }) => {
                         window.addch(c);
                         window.mv(y as i32, x as i32);
                         // update canvas
@@ -172,7 +172,7 @@ fn handle_key(
             // update canvas
             canvas.set(x as usize, y as usize, c);
             // update server
-            let msg = Message::SetChar {
+            let msg = Message::CharSet {
                 y: y as usize,
                 x: x as usize,
                 c,

@@ -76,7 +76,7 @@ impl Display for Version {
 /// use collascii::network::Message;
 /// let source = "s 2 1 A\n";
 /// let msg = Message::from_reader(&mut source.as_bytes()).unwrap();
-/// assert_eq!(Message::SetChar{ x: 1, y: 2, c: 'A' }, msg);
+/// assert_eq!(Message::CharSet{ x: 1, y: 2, c: 'A' }, msg);
 /// ```
 ///
 /// The current canonical way to create a message is to `write_fmt!(format_args!("{}", msg))` it.
@@ -96,7 +96,7 @@ impl Display for Version {
 /// - Messages are sent between clients and servers over TCP connections.
 /// - Messages are ascii text.
 /// - All messages end with a single newline character (`'\n'`).
-/// - [Some messages](Message::CanvasSend) contain multiple newline characters.
+/// - [Some messages](Message::CanvasSet) contain multiple newline characters.
 /// - The first line of all messages should be should be enough to distinguish them and prepare to parse any remaining data.
 /// - The first line of messages are no more than 64 characters long, including the newline.
 /// - To remain forwards-compatible, servers should silently ignore messages with prefixes they do not recognize.
@@ -111,7 +111,7 @@ impl Display for Version {
 /// - A `<param>` is a sequence of non-whitespace characters that holds some type of data for the message.
 /// - The `<prefix>` and any `<param>`s are separated from each other by a single space (` `).
 ///
-/// For example, the [`Message::SetChar`] that sets the character at (1, 2) to `'A'` looks like `"s 2 1 A\n"`.
+/// For example, the [`Message::CharSet`] that sets the character at (1, 2) to `'A'` looks like `"s 2 1 A\n"`.
 ///
 /// The `1.0` protocol looks like this:
 /// 1. Client opens TCP connection to server
@@ -119,10 +119,10 @@ impl Display for Version {
 /// 3.
 ///     - if server _does not_ support the requested protocol version, it **closes the connection**.
 ///     - if server _does_ support the requested protocol version, it sends a [`Message::VersionAck`].
-/// 4. The server sends a [`Message::CanvasSend`] with the current contents.
+/// 4. The server sends a [`Message::CanvasSet`] with the current contents.
 /// 5. From here on out:
-///     - server sends a [`Message::SetChar`] whenever a character is changed by another client
-///     - client sends a [`Message::SetChar`] to change a character on the server.
+///     - server sends a [`Message::CharSet`] whenever a character is changed by another client
+///     - client sends a [`Message::CharSet`] to change a character on the server.
 /// 6. Client sends a [`Message::Quit`] and closes the connection.
 ///
 /// When the connection is closed due to an error, the closing party may write a message explaining the reason why before closing.
@@ -137,7 +137,7 @@ pub enum Message {
     /// **Text format**: `"s <ypos> <xpos> <character>\n"`
     ///
     /// **Note**: if the character in question is space (`' '`), then the message will end with two spaces and a newline (`"...<xpos>  \n"`).
-    SetChar { x: usize, y: usize, c: char },
+    CharSet { x: usize, y: usize, c: char },
 
     /// Replace the canvas
     ///
@@ -149,7 +149,7 @@ pub enum Message {
     /// - `<canvasdata>` is each row of the canvas concatenated together starting with the top row (`y = 0`), as outputted by [`Canvas::serialize`].
     ///
     /// NOTE: `<canvasdata>` will always be `width * height* characters long.
-    CanvasSend { c: Canvas },
+    CanvasSet { c: Canvas },
 
     /// Request a protocol version to use
     ///
@@ -208,11 +208,11 @@ impl Message {
         let prefix = vals[0];
         let params = &vals[1..];
         match prefix {
-            // SetChar
+            // CharSet
             "s" => {
                 if params.len() < 3 {
                     return Err(parse_error(&format!(
-                        "Expected 3 parameters for SetChar, got {}",
+                        "Expected 3 parameters for CharSet, got {}",
                         params.len()
                     )));
                 }
@@ -235,13 +235,13 @@ impl Message {
                         c
                     )));
                 }
-                Ok(Message::SetChar { y, x, c })
+                Ok(Message::CharSet { y, x, c })
             }
-            // CanvasSend
+            // CanvasSet
             "cs" => {
                 if params.len() != 2 {
                     return Err(parse_error(&format!(
-                        "Expected 2 parameters for CanvasSend, got {}",
+                        "Expected 2 parameters for CanvasSet, got {}",
                         params.len()
                     )));
                 }
@@ -261,7 +261,7 @@ impl Message {
                     .expect("Error reading from server");
                 // this won't error out if more characters are read - any extra data will be dropped
                 canvas.insert(&buf);
-                Ok(Message::CanvasSend { c: canvas })
+                Ok(Message::CanvasSet { c: canvas })
             }
             // VersionReq
             "v" => {
@@ -296,8 +296,8 @@ impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Message::*;
         match self {
-            SetChar { y, x, c } => writeln!(f, "s {} {} {}", y, x, c)?,
-            CanvasSend { c } => writeln!(f, "cs {} {}\n{}", c.height(), c.width(), c.serialize())?,
+            CharSet { y, x, c } => writeln!(f, "s {} {} {}", y, x, c)?,
+            CanvasSet { c } => writeln!(f, "cs {} {}\n{}", c.height(), c.width(), c.serialize())?,
             VersionReq { v } => writeln!(f, "v {}", v)?,
             VersionAck => writeln!(f, "vok")?,
             Quit => writeln!(f, "q")?,
@@ -320,12 +320,12 @@ mod test {
         let mut c1 = Canvas::new(3, 2);
         c1.insert("X1234");
         let msg_test_cases = [
-            // SetChar
-            (SetChar { y: 3, x: 2, c: 'a' }, "s 3 2 a\n"),
-            (SetChar { y: 1, x: 0, c: 'Z' }, "s 1 0 Z\n"),
-            (SetChar { y: 1, x: 0, c: ' ' }, "s 1 0  \n"),
+            // CharSet
+            (CharSet { y: 3, x: 2, c: 'a' }, "s 3 2 a\n"),
+            (CharSet { y: 1, x: 0, c: 'Z' }, "s 1 0 Z\n"),
+            (CharSet { y: 1, x: 0, c: ' ' }, "s 1 0  \n"),
             // Canvas
-            (CanvasSend { c: c1 }, "cs 2 3\nX1234 \n"),
+            (CanvasSet { c: c1 }, "cs 2 3\nX1234 \n"),
             // VersionReq
             (
                 VersionReq {
@@ -374,9 +374,9 @@ mod test {
     #[test]
     fn parse_bad() {
         let bad_cases = [
-            ("s 1 0 \n", "SetChar: whitespace but no character"),
-            ("s 1 0  f\n", "SetChar: two spaces before character"),
-            ("s 1 0 \t\n", "SetChar: tab character"),
+            ("s 1 0 \n", "CharSet: whitespace but no character"),
+            ("s 1 0  f\n", "CharSet: two spaces before character"),
+            ("s 1 0 \t\n", "CharSet: tab character"),
             ("s 1 0 f\r", "return character only"),
             ("s 1 0 f\r\n", "return and newline characters"),
             ("s 1 0 f", "no newline"),
