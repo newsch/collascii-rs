@@ -11,7 +11,7 @@ use log::{debug, info, warn};
 use structopt::StructOpt;
 
 use collascii::canvas::Canvas;
-use collascii::network::{Message, Version, DEFAULT_PORT};
+use collascii::network::{Message, ParseMessageError, Version, DEFAULT_PORT};
 
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
 
@@ -88,7 +88,7 @@ fn handle_stream(
     mut stream: TcpStream,
     canvas: &Mutex<Canvas>,
     clients: &Mutex<Clients>,
-) -> io::Result<()> {
+) -> Result<(), ParseMessageError> {
     // for each client:
     // - check protocol version
     // - send canvas

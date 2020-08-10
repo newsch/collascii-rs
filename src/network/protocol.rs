@@ -3,7 +3,7 @@ use std::io::{self, BufRead, Write};
 use thiserror::Error;
 
 use crate::canvas::Canvas;
-use crate::network::{Message, Version};
+use crate::network::{Message, ParseMessageError, Version};
 
 pub const DEFAULT_PORT: &str = "45011";
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
@@ -12,6 +12,8 @@ const PROTOCOL_VERSION: Version = Version::new(1, 0);
 pub enum ProtocolError {
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error(transparent)]
+    ParseMessage(#[from] ParseMessageError),
 }
 
 pub trait Client: BufRead + Write + Sized {
