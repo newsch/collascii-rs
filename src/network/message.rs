@@ -68,6 +68,28 @@ impl Display for Version {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum ParseMessageError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error("Expected {exp} for {msg}, found {found}")]
+    ParamCount {
+        msg: &'static str,
+        exp: usize,
+        found: usize,
+    },
+    #[error("Invalid value for {msg} param {param}: {val:?}")]
+    InvalidParam {
+        msg: &'static str,
+        param: &'static str,
+        val: String,
+    },
+    #[error("Message is not formatted correctly: {0:?}")]
+    FormatError(String),
+    #[error("Unknown prefix: {0:?}")]
+    UnknownPrefix(String),
+}
+
 /// A message sent between instances to modify a shared canvas.
 ///
 /// To parse a message from a text/bytes source, use [`Message::from_reader`].
@@ -182,106 +204,130 @@ pub enum Message {
 
 impl Message {
     /// Parse a readable buffer and try to build a message from it.
-    pub fn from_reader<R>(source: &mut R) -> Result<Self, io::Error>
+    pub fn from_reader<R>(source: &mut R) -> Result<Self, ParseMessageError>
     where
         R: BufRead,
     {
+        use ParseMessageError::*;
+
         let mut line = String::new();
         let _size = source.read_line(&mut line)?;
-        let parse_error = |msg: &str| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Parse Error: {}: {:?}", msg, line.clone()),
-            )
-        };
         if line.len() == 0 {
-            return Ok(Message::Quit);
+            return Err(FormatError(line.to_owned()));
         }
-        // TODO: fix up the error handling here
         let line = line
             .strip_suffix('\n')
-            .ok_or(parse_error("No trailing newline"))?;
+            .ok_or(FormatError(line.to_owned()))?;
         let vals: Vec<&str> = line.split(' ').collect(); // all of the items in the message, including the prefix
         if vals.len() == 0 {
-            return Err(parse_error("Line has no content"));
+            return Err(FormatError(line.to_owned()));
         }
         let prefix = vals[0];
         let params = &vals[1..];
         match prefix {
             // CharSet
             "s" => {
-                if params.len() < 3 {
-                    return Err(parse_error(&format!(
-                        "Expected 3 parameters for CharSet, got {}",
-                        params.len()
-                    )));
+                let msg = "Charset";
+                let exp = 3;
+                if params.len() < exp {
+                    return Err(ParamCount {
+                        msg,
+                        exp,
+                        found: params.len(),
+                    });
                 }
-                let y: usize = params[0]
-                    .parse()
-                    .map_err(|_| parse_error("Invalid y value"))?;
-                let x: usize = params[1]
-                    .parse()
-                    .map_err(|_| parse_error("Invalid x value"))?;
+
+                let y: usize = params[0].parse().map_err(|_| InvalidParam {
+                    msg,
+                    param: "y",
+                    val: params[0].to_owned(),
+                })?;
+                let x: usize = params[1].parse().map_err(|_| InvalidParam {
+                    msg,
+                    param: "x",
+                    val: params[1].to_owned(),
+                })?;
                 let c: char = match (params[2], params.get(3)) {
                     ("", Some(&"")) => " ",
                     (_c, None) => _c,
-                    (_, Some(_)) => return Err(parse_error("Invalid c value")),
+                    (a, Some(b)) => {
+                        return Err(InvalidParam {
+                            msg,
+                            param: "c",
+                            val: format!("{} {}", a, b),
+                        })
+                    }
                 }
                 .parse()
-                .map_err(|_| parse_error("Invalid c value"))?;
+                .map_err(|_| InvalidParam {
+                    msg,
+                    param: "c",
+                    val: params[2].to_owned(),
+                })?;
                 if c != ' ' && c.is_ascii_whitespace() {
-                    return Err(parse_error(&format!(
-                        "Invalid whitespace for c value: {:?}",
-                        c
-                    )));
+                    return Err(InvalidParam {
+                        msg,
+                        param: "c",
+                        val: params[2].to_owned(),
+                    });
                 }
                 Ok(Message::CharSet { y, x, c })
             }
             // CanvasSet
             "cs" => {
-                if params.len() != 2 {
-                    return Err(parse_error(&format!(
-                        "Expected 2 parameters for CanvasSet, got {}",
-                        params.len()
-                    )));
+                let msg = "CanvasSet";
+                let exp = 2;
+                if params.len() != exp {
+                    return Err(ParamCount {
+                        msg,
+                        exp,
+                        found: params.len(),
+                    });
                 }
-                let height: usize = params[0]
-                    .parse()
-                    .map_err(|_| parse_error("Invalid height value"))?;
-                let width: usize = params[1]
-                    .parse()
-                    .map_err(|_| parse_error("Invalid width value"))?;
+                let height: usize = params[0].parse().map_err(|_| InvalidParam {
+                    msg,
+                    param: "height",
+                    val: params[0].to_owned(),
+                })?;
+                let width: usize = params[1].parse().map_err(|_| InvalidParam {
+                    msg,
+                    param: "width",
+                    val: params[1].to_owned(),
+                })?;
                 let mut canvas = Canvas::new(width, height);
                 // load data into canvas
                 // all characters for canvas plus newline
                 let bytes_to_read = width * height + 1;
                 let mut buf = String::with_capacity(bytes_to_read);
-                source
-                    .read_line(&mut buf)
-                    .expect("Error reading from server");
-                // this won't error out if more characters are read - any extra data will be dropped
+                source.read_line(&mut buf)?;
+                // this won't error out if more characters are read than can fill the canvas - any extra data will be dropped
                 canvas.insert(&buf);
                 Ok(Message::CanvasSet { c: canvas })
             }
             // VersionReq
             "v" => {
-                if params.len() < 1 {
-                    return Err(parse_error(&format!(
-                        "Expected 1 parameter for ProtocolVersionReq, got {}",
-                        params.len()
-                    )));
+                let msg = "VersionReq";
+                let exp = 1;
+                if params.len() < exp {
+                    return Err(ParamCount {
+                        msg,
+                        exp,
+                        found: params.len(),
+                    });
                 }
                 let version = params[0];
-                let version = version
-                    .parse::<Version>()
-                    .map_err(|e| parse_error(&format!("Couldn't parse version: {}", e)))?;
+                let version = version.parse::<Version>().map_err(|_e| InvalidParam {
+                    msg,
+                    param: "version",
+                    val: params[0].to_owned(),
+                })?;
                 Ok(Message::VersionReq { v: version })
             }
             // VersionAck
             "vok" => Ok(Message::VersionAck),
             // Quit
             "q" => Ok(Message::Quit),
-            _ => Err(parse_error("Unknown command")),
+            p => Err(UnknownPrefix(p.to_string())),
         }
     }
 }
