@@ -32,7 +32,7 @@ pub trait Client: BufRead + Write + Sized {
 
         let m = Message::from_reader(self).unwrap();
         let canvas = match m {
-            Message::CanvasSend { c } => c,
+            Message::CanvasSet { c } => c,
             _ => panic!(),
         };
 
@@ -40,7 +40,7 @@ pub trait Client: BufRead + Write + Sized {
     }
 
     fn send_char_update(&mut self, x: usize, y: usize, c: char) -> Result<(), ProtocolError> {
-        self.write_fmt(format_args!("{}", Message::SetChar { x, y, c }))
+        self.write_fmt(format_args!("{}", Message::CharSet { x, y, c }))
             .unwrap();
         Ok(())
     }
@@ -48,7 +48,7 @@ pub trait Client: BufRead + Write + Sized {
     fn check_for_update(&mut self) -> Result<Option<(usize, usize, char)>, ProtocolError> {
         let m = Message::from_reader(self).unwrap();
         match m {
-            Message::SetChar { x, y, c } => Ok(Some((x, y, c))),
+            Message::CharSet { x, y, c } => Ok(Some((x, y, c))),
             _ => panic!(),
         }
     }

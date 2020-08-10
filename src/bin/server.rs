@@ -115,7 +115,7 @@ fn handle_stream(
     // send current canvas to new client
     {
         let c = canvas.lock().unwrap();
-        let msg = Message::CanvasSend { c: c.clone() };
+        let msg = Message::CanvasSet { c: c.clone() };
         stream.write_fmt(format_args!("{}", msg))?;
     }
 
@@ -130,7 +130,7 @@ fn handle_stream(
                 clients.lock().unwrap().remove(uid);
                 return Ok(());
             }
-            SetChar { y, x, c } => {
+            CharSet { y, x, c } => {
                 // update canvas and broadcast to others
                 {
                     let mut canvas = canvas.lock().unwrap();
@@ -150,7 +150,7 @@ fn handle_stream(
                 clients.send(uid, format_args!("{}", msg))?;
                 debug!("Forwarded {:?} to other clients", msg);
             }
-            CanvasSend { c: _ } => {
+            CanvasSet { c: _ } => {
                 // swap canvas, broadcast to others
                 unimplemented!()
             }
