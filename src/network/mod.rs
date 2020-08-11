@@ -1,5 +1,5 @@
 mod message;
-pub use message::{Message, ParseMessageError, Version};
+pub use message::*;
 
 mod protocol;
-pub use protocol::{Client, ProtocolError, DEFAULT_PORT};
+pub use protocol::{Client, ProtocolError, Server, DEFAULT_PORT};

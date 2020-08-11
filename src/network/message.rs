@@ -2,7 +2,7 @@
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use std::num::ParseIntError;
 use std::str::FromStr;
 
@@ -431,5 +431,23 @@ mod test {
             let result = Message::from_reader(&mut case.as_bytes());
             assert!(result.is_err(), *description);
         }
+    }
+}
+
+pub trait Messenger {
+    fn send_msg(&mut self, msg: Message) -> Result<(), io::Error>;
+    fn get_msg(&mut self) -> Result<Message, ParseMessageError>;
+}
+
+impl<T> Messenger for T
+where
+    T: BufRead + Write + Sized,
+{
+    fn send_msg(&mut self, msg: Message) -> Result<(), io::Error> {
+        self.write_fmt(format_args!("{}", msg))
+    }
+
+    fn get_msg(&mut self) -> Result<Message, ParseMessageError> {
+        Message::from_reader(self)
     }
 }
