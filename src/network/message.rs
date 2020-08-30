@@ -23,6 +23,9 @@ pub enum ParseVersionError {
     MinorParseError(#[source] ParseIntError),
 }
 
+/// Unique identifier of a client
+pub type CollabId = u8;
+
 /// A major.minor version
 /// ```
 /// use collascii::network::Version;
@@ -145,7 +148,11 @@ pub enum ParseMessageError {
 /// 5. From here on out:
 ///     - server sends a [`Message::CharSet`] whenever a character is changed by another client
 ///     - client sends a [`Message::CharSet`] to change a character on the server.
-/// 6. Client sends a [`Message::Quit`] and closes the connection.
+/// 6. The client MAY send a [`Message::PosSet`] whenever it wishes to share it's cursor position.
+///    Once one of those message's  _is_ sent, a server that supports it will send:
+///     - a [`Message::CollabPosSet`] when a collaborator's cursor moves
+///     - a [`Message::CollabQuit`] when a collaborator quits
+/// 7. Client sends a [`Message::Quit`] and closes the connection.
 ///
 /// When the connection is closed due to an error, the closing party may write a message explaining the reason why before closing.
 #[non_exhaustive]
@@ -172,6 +179,14 @@ pub enum Message {
     ///
     /// NOTE: `<canvasdata>` will always be `width * height* characters long.
     CanvasSet { c: Canvas },
+
+    /// Send the position of the cursor
+    /// p
+    PosSet { x: usize, y: usize },
+
+    /// A collaborator's cursor has changed position
+    /// pc
+    CollabPosSet { x: usize, y: usize, id: CollabId },
 
     /// Request a protocol version to use
     ///
@@ -200,13 +215,17 @@ pub enum Message {
     ///
     /// **Text format**: `"q\n"`
     Quit,
+
+    /// A collaborator has quit
+    /// qc
+    CollabQuit { id: CollabId },
 }
 
 impl Message {
     /// Parse a readable buffer and try to build a message from it.
     pub fn from_reader<R>(source: &mut R) -> Result<Self, ParseMessageError>
     where
-        R: BufRead,
+    R: BufRead,
     {
         use ParseMessageError::*;
 
@@ -225,7 +244,6 @@ impl Message {
         let prefix = vals[0];
         let params = &vals[1..];
         match prefix {
-            // CharSet
             "s" => {
                 let msg = "Charset";
                 let exp = 3;
@@ -273,7 +291,6 @@ impl Message {
                 }
                 Ok(Message::CharSet { y, x, c })
             }
-            // CanvasSet
             "cs" => {
                 let msg = "CanvasSet";
                 let exp = 2;
@@ -304,7 +321,60 @@ impl Message {
                 canvas.insert(&buf);
                 Ok(Message::CanvasSet { c: canvas })
             }
-            // VersionReq
+            "p" => {
+                let msg = "PosSet";
+                let exp = 2;
+                if params.len() < exp {
+                    return Err(ParamCount {
+                        msg,
+                        exp,
+                        found: params.len(),
+                    });
+                }
+                let y = params[0];
+                let y = y.parse::<usize>().map_err(|_e| InvalidParam {
+                    msg,
+                    param: "y",
+                    val: params[0].to_owned(),
+                })?;
+                let x = params[1];
+                let x = x.parse::<usize>().map_err(|_e| InvalidParam {
+                    msg,
+                    param: "x",
+                    val: params[2].to_owned(),
+                })?;
+                Ok(Message::PosSet {y, x})
+            },
+            "pc" => {
+                let msg = "CollabPosSet";
+                let exp = 3;
+                if params.len() < exp {
+                    return Err(ParamCount {
+                        msg,
+                        exp,
+                        found: params.len(),
+                    });
+                }
+                let y = params[0];
+                let y = y.parse::<usize>().map_err(|_e| InvalidParam {
+                    msg,
+                    param: "y",
+                    val: params[0].to_owned(),
+                })?;
+                let x = params[1];
+                let x = x.parse::<usize>().map_err(|_e| InvalidParam {
+                    msg,
+                    param: "x",
+                    val: params[2].to_owned(),
+                })?;
+                let id = params[2];
+                let id = id.parse::<CollabId>().map_err(|_e| InvalidParam {
+                    msg,
+                    param: "id",
+                    val: params[2].to_owned(),
+                })?;
+                Ok(Message::CollabPosSet{ y,x,id })
+            },
             "v" => {
                 let msg = "VersionReq";
                 let exp = 1;
@@ -323,13 +393,30 @@ impl Message {
                 })?;
                 Ok(Message::VersionReq { v: version })
             }
-            // VersionAck
             "vok" => Ok(Message::VersionAck),
-            // Quit
             "q" => Ok(Message::Quit),
+            "qc" => {
+                let msg = "CollabQuit";
+                let exp = 1;
+                if params.len() < exp {
+                    return Err(ParamCount {
+                        msg,
+                        exp,
+                        found: params.len(),
+                    });
+                }
+                let id = params[0];
+                let id = id.parse::<CollabId>().map_err(|_e| InvalidParam {
+                    msg,
+                    param: "id",
+                    val: params[0].to_owned(),
+                })?;
+                Ok(Message::CollabQuit{ id })
+            },
             p => Err(UnknownPrefix(p.to_string())),
         }
     }
+
 }
 
 impl Into<String> for Message {
@@ -347,6 +434,9 @@ impl fmt::Display for Message {
             VersionReq { v } => writeln!(f, "v {}", v)?,
             VersionAck => writeln!(f, "vok")?,
             Quit => writeln!(f, "q")?,
+            CollabQuit { id } => writeln!(f, "qc {}", id)?,
+            CollabPosSet { x, y, id } => writeln!(f, "pc {} {} {}", y, x, id)?,
+            PosSet { x, y } => writeln!(f, "p {} {}", y, x)?,
         }
         Ok(())
     }
@@ -390,6 +480,12 @@ mod test {
             (VersionAck, "vok 1.1\n"),
             // Quit
             (Quit, "q\n"),
+            // PosSet
+            (PosSet { x: 1, y: 2 }, "p 2 1\n"),
+            // CollabPosSet
+            (CollabPosSet { x: 1, y: 2, id: 101 }, "pc 2 1 101\n"),
+            // CollabQuit
+            (CollabQuit { id: 101 }, "qc 101\n"),
         ];
 
         // parse them individually
@@ -414,6 +510,13 @@ mod test {
             eprintln!("parsed: {:?}", parsed);
             assert!(parsed.is_ok());
             assert_eq!(expected, &parsed.unwrap());
+        }
+
+        // write them individually
+        for (i, (input, expected)) in msg_test_cases.iter().enumerate() {
+            let result = format!("{}", input);
+            eprintln!("{}: {:?} -> {:?}", i, input, expected);
+            assert_eq!(*expected, result);
         }
     }
 

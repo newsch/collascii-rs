@@ -3,7 +3,7 @@ use std::io;
 use thiserror::Error;
 
 use crate::canvas::Canvas;
-use crate::network::{Message, Messenger, ParseMessageError, Version};
+use crate::network::{CollabId, Message, Messenger, ParseMessageError, Version};
 
 pub const DEFAULT_PORT: &str = "45011";
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
@@ -55,18 +55,29 @@ pub trait Client: Messenger {
         Ok(canvas)
     }
 
+    #[allow(unused_variables)]
+    fn on_char_update(&mut self, x: usize, y: usize, c: char) {}
+
+    #[allow(unused_variables)]
+    fn on_pos_update(&mut self, x: usize, y: usize, id: CollabId) {}
+
     fn send_char_update(&mut self, x: usize, y: usize, c: char) -> Result<(), io::Error> {
         self.send_msg(Message::CharSet { x, y, c })
     }
 
-    fn check_for_update(&mut self) -> Result<(usize, usize, char), ProtocolError> {
+    fn send_pos_update(&mut self, x: usize, y: usize) -> Result<(), io::Error> {
+        self.send_msg(Message::PosSet { x, y })
+    }
+
+    fn check_for_update(&mut self) -> Result<(), ProtocolError> {
         use ProtocolError::UnexpectedMessage;
 
         match self.get_msg()? {
-            Message::CharSet { x, y, c } => Ok((x, y, c)),
+            Message::CharSet { x, y, c } => Ok(self.on_char_update(x, y, c)),
+            Message::CollabPosSet { x, y, id } => Ok(self.on_pos_update(x, y, id)),
             msg => Err(UnexpectedMessage {
                 msg,
-                reason: "Expected CharSet",
+                reason: "Expected CharSet or CollabPosSet",
             }),
         }
     }
@@ -103,11 +114,21 @@ pub trait Server: Messenger {
         Ok(())
     }
 
+    #[allow(unused_variables)]
+    fn on_char_update(&mut self, x: usize, y: usize, c: char) {}
+
+    #[allow(unused_variables)]
+    fn on_pos_update(&mut self, x: usize, y: usize) {}
+
     fn send_char_update(&mut self, x: usize, y: usize, c: char) -> Result<(), io::Error> {
         self.send_msg(Message::CharSet { x, y, c })
     }
 
-    fn check_for_update(&mut self) -> Result<(usize, usize, char), ProtocolError> {
+    fn send_pos_update(&mut self, x: usize, y: usize, id: CollabId) -> Result<(), io::Error> {
+        self.send_msg(Message::CollabPosSet { x, y, id })
+    }
+
+    fn check_for_update(&mut self) -> Result<(), ProtocolError> {
         use Message::*;
         use ParseMessageError::UnknownPrefix;
 
@@ -116,7 +137,8 @@ pub trait Server: Messenger {
                 // ignore unrecognized messages from client
                 Err(UnknownPrefix { .. }) => continue,
                 Err(e) => break Err(e.into()),
-                Ok(CharSet { x, y, c }) => break Ok((x, y, c)),
+                Ok(CharSet { x, y, c }) => break Ok(self.on_char_update(x, y, c)),
+                Ok(PosSet { x, y }) => break Ok(self.on_pos_update(x, y)),
                 Ok(Quit) => break Err(ProtocolError::Quit),
                 Ok(msg) => {
                     break Err(ProtocolError::UnexpectedMessage {
