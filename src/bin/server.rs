@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, prelude::*};
-use std::net::{TcpListener, TcpStream};
+use std::io::{self, prelude::*, BufReader};
+use std::net::{TcpListener, TcpStream, Shutdown};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -11,9 +11,9 @@ use log::{debug, info, warn};
 use structopt::StructOpt;
 
 use collascii::canvas::Canvas;
-use collascii::network::{Message, ParseMessageError, Version, DEFAULT_PORT};
-
-const PROTOCOL_VERSION: Version = Version::new(1, 0);
+use collascii::network::{
+    CollabId, Message, Messenger, ParseMessageError, Server, DEFAULT_PORT, ProtocolError,
+};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -70,101 +70,122 @@ fn main() -> anyhow::Result<()> {
         let canvas = canvas.clone();
         let clients = clients.clone();
 
+        let read_stream = io::BufReader::new(stream.try_clone().unwrap());
+        let write_stream = stream;
+
         thread::spawn(move || {
-            match handle_stream(uid, stream, &canvas, &clients) {
+            let mut handler = ClientHandler {
+                uid,
+                write_stream,
+                read_stream,
+                canvas,
+                clients,
+            };
+
+            use ProtocolError::*;
+            match handler.run() {
                 Ok(()) => info!("Client {} left", uid),
+                Err(Io(e)) => warn!("Client {} disconnected: {}", uid, e),
                 Err(e) => warn!("Client {} disconnected: {}", uid, e),
             }
-            clients.lock().unwrap().remove(uid);
+            handler.clients.lock().unwrap().remove(uid);
+            let res = handler.write_stream.shutdown(Shutdown::Both);
+            debug!("Closed stream: {:?}", res);
         });
     }
 }
 
-/// Manage a socket connection to the server.
-///
-/// Returns when the connection ends.
-fn handle_stream(
-    uid: ClientUid,
-    mut stream: TcpStream,
-    canvas: &Mutex<Canvas>,
-    clients: &Mutex<Clients>,
-) -> Result<(), ParseMessageError> {
-    // for each client:
-    // - check protocol version
-    // - send canvas
-    // - on message received, interpret, modify, and forward
+struct ClientHandler {
+    uid: CollabId,
+    write_stream: TcpStream,
+    read_stream: BufReader<TcpStream>,
+    canvas: Arc<Mutex<Canvas>>,
+    clients: Arc<Mutex<Clients>>,
+}
 
-    let mut read_stream = io::BufReader::new(stream.try_clone().unwrap());
+impl ClientHandler {
+    fn run(&mut self) -> Result<(), ProtocolError> {
+        use ProtocolError::*;
 
-    // protocol version negotiation
-    let _version = {
-        let msg = Message::from_reader(&mut read_stream)?;
-        if let Message::VersionReq { v } = msg {
-            // set version
-            if v != PROTOCOL_VERSION {
-                stream.write_all(b"Unknown version\n")?;
-                panic!("Unknown version");
+        self.init_connection()?;
+        loop {
+            match self.check_for_update() {
+                Ok(()) => continue,
+                Err(Quit) => break Ok(()),
+                e => break e,
             }
-            stream.write_fmt(format_args!("{}", Message::VersionAck))?;
-            v
-        } else {
-            panic!("Expected version statement");
-        }
-    };
-
-    // send current canvas to new client
-    {
-        let c = canvas.lock().unwrap();
-        let msg = Message::CanvasSet { c: c.clone() };
-        stream.write_fmt(format_args!("{}", msg))?;
-    }
-
-    // main loop
-    loop {
-        let msg = Message::from_reader(&mut read_stream)?;
-        debug!("Parsed message from input stream: {:?}", msg);
-        use Message::*;
-        match msg {
-            Quit => {
-                // stop and exit
-                clients.lock().unwrap().remove(uid);
-                return Ok(());
-            }
-            CharSet { y, x, c } => {
-                // update canvas and broadcast to others
-                {
-                    let mut canvas = canvas.lock().unwrap();
-                    if canvas.is_in(x, y) {
-                        canvas.set(x, y, c);
-                        debug!("Set {:?} to {:?} on local canvas", (x, y), c);
-                    } else {
-                        warn!(
-                            "Position {:?} out of bounds for canvas of size {:?}",
-                            (x, y),
-                            (canvas.width(), canvas.height())
-                        );
-                    }
-                }
-
-                let mut clients = clients.lock().unwrap();
-                clients.send(uid, format_args!("{}", msg))?;
-                debug!("Forwarded {:?} to other clients", msg);
-            }
-            CanvasSet { c: _ } => {
-                // swap canvas, broadcast to others
-                unimplemented!()
-            }
-            m => panic!("Unexpected message: {:?}", m), // TODO: move this to a result
         }
     }
 }
 
-/// Unique identifier of a client
-type ClientUid = u8;
+impl Messenger for ClientHandler {
+    fn send_msg(&mut self, msg: Message) -> Result<(), io::Error> {
+        self.write_stream.write_fmt(format_args!("{}", msg))
+    }
+    fn get_msg(&mut self) -> Result<Message, ParseMessageError> {
+        Message::from_reader(&mut self.read_stream)
+    }
+}
+
+impl Server for ClientHandler {
+    fn get_canvas(&self) -> Canvas {
+        self.canvas.lock().unwrap().clone()
+    }
+
+    fn on_char_update(&mut self, x: usize, y: usize, c: char) {
+        let mut canvas = self.canvas.lock().unwrap();
+        if canvas.is_in(x, y) {
+            canvas.set(x, y, c);
+            debug!("Set {:?} to {:?} on local canvas", (x, y), c);
+        } else {
+            warn!(
+                "Position {:?} out of bounds for canvas of size {:?}",
+                (x, y),
+                (canvas.width(), canvas.height())
+            );
+            return;
+        }
+
+        let msg = Message::CharSet{x,y,c};
+
+        let mut clients = self.clients.lock().unwrap();
+        clients.send(self.uid, format_args!("{}",msg)).unwrap();
+        debug!("Forwarded {:?} to other clients", msg);
+    }
+
+    fn on_pos_update(&mut self, x: usize, y: usize) {
+        // TODO: check bounds of pos update
+        let msg = Message::CollabPosSet { x, y, id: self.uid };
+        self.clients
+            .lock()
+            .unwrap()
+            .update_pos(self.uid, x, y)
+            .expect("Error sending pos update"); // TODO: better error handling here; this should poison the mutex if sending to any client is an error
+
+        // TODO: if this is the first time, set wants_pos_updates and send all known pos
+        debug!("Forwarded {:?} to other clients", msg);
+    }
+}
+
+struct ClientInfo {
+    stream: TcpStream,
+    pos: (usize, usize),
+    wants_pos_updates: bool,
+}
+
+impl ClientInfo {
+    fn new(stream: TcpStream) -> Self {
+        Self {
+            stream,
+            pos: (0, 0),
+            wants_pos_updates: false,
+        }
+    }
+}
 
 /// Queue of connected network clients
 struct Clients {
-    list: HashMap<ClientUid, TcpStream>,
+    list: HashMap<CollabId, ClientInfo>,
 }
 
 impl Clients {
@@ -176,15 +197,15 @@ impl Clients {
 
     /// Send a message to all clients
     pub fn broadcast(&mut self, msg: fmt::Arguments) -> io::Result<()> {
-        for (_uid, stream) in self.list.iter_mut() {
+        for (_uid, ClientInfo { stream, .. }) in self.list.iter_mut() {
             stream.write_fmt(msg)?
         }
         Ok(())
     }
 
     /// Send a message to all clients but one (usually the sender)
-    pub fn send(&mut self, client: ClientUid, msg: fmt::Arguments) -> io::Result<()> {
-        for (&uid, stream) in self.list.iter_mut() {
+    pub fn send(&mut self, client: CollabId, msg: fmt::Arguments) -> io::Result<()> {
+        for (&uid, ClientInfo { stream, .. }) in self.list.iter_mut() {
             if uid == client {
                 continue;
             }
@@ -193,27 +214,54 @@ impl Clients {
         Ok(())
     }
 
+    pub fn filter_send<P>(
+        &mut self,
+        mut predicate: P,
+        ignore: CollabId,
+        msg: fmt::Arguments,
+    ) -> io::Result<()>
+    where
+        P: FnMut(&ClientInfo) -> bool,
+    {
+        for (_, ClientInfo { stream, .. }) in self
+            .list
+            .iter_mut()
+            .filter(|(id, _)| **id != ignore)
+            .filter(|(_, c)| predicate(c))
+        {
+            stream.write_fmt(msg)?
+        }
+        Ok(())
+    }
+
     /// Add a client to the queue, returning the uid
-    pub fn add(&mut self, client: TcpStream) -> ClientUid {
+    pub fn add(&mut self, stream: TcpStream) -> CollabId {
         let uid = self.get_new_uid();
-        if self.list.insert(uid, client).is_some() {
+        let info = ClientInfo::new(stream);
+        if self.list.insert(uid, info).is_some() {
             panic!("Uid should not exist in map!")
         }
         return uid;
     }
 
     /// Remove a client from the queue
-    pub fn remove(&mut self, client: ClientUid) -> Option<TcpStream> {
-        self.list.remove(&client)
+    pub fn remove(&mut self, client: CollabId) -> Option<TcpStream> {
+        self.list.remove(&client).map(|c| c.stream)
     }
 
     /// Get a new uid for a client
     ///
     /// Warning: this will panic if the max uid is the maximum u8.
-    fn get_new_uid(&self) -> ClientUid {
+    fn get_new_uid(&self) -> CollabId {
         match self.list.keys().max() {
             None => 1,
             Some(max_uid) => max_uid + 1,
         }
+    }
+
+    fn update_pos(&mut self, id: CollabId, x: usize, y: usize) -> io::Result<()> {
+        self.list.get_mut(&id).unwrap().pos = (x, y);
+        let msg = Message::CollabPosSet { x, y, id };
+        self.filter_send(|c| c.wants_pos_updates, id, format_args!("{}", msg))
     }
 }
