@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, prelude::*, BufReader};
-use std::net::{TcpListener, TcpStream, Shutdown};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -12,7 +12,7 @@ use structopt::StructOpt;
 
 use collascii::canvas::Canvas;
 use collascii::network::{
-    CollabId, Message, Messenger, ParseMessageError, Server, DEFAULT_PORT, ProtocolError,
+    CollabId, Message, Messenger, ParseMessageError, ProtocolError, Server, DEFAULT_PORT,
 };
 
 #[derive(Debug, StructOpt)]
@@ -80,6 +80,7 @@ fn main() -> anyhow::Result<()> {
                 read_stream,
                 canvas,
                 clients,
+                wants_pos_updates: false,
             };
 
             use ProtocolError::*;
@@ -101,6 +102,7 @@ struct ClientHandler {
     read_stream: BufReader<TcpStream>,
     canvas: Arc<Mutex<Canvas>>,
     clients: Arc<Mutex<Clients>>,
+    wants_pos_updates: bool,
 }
 
 impl ClientHandler {
@@ -146,10 +148,10 @@ impl Server for ClientHandler {
             return;
         }
 
-        let msg = Message::CharSet{x,y,c};
+        let msg = Message::CharSet { x, y, c };
 
         let mut clients = self.clients.lock().unwrap();
-        clients.send(self.uid, format_args!("{}",msg)).unwrap();
+        clients.send(self.uid, format_args!("{}", msg)).unwrap();
         debug!("Forwarded {:?} to other clients", msg);
     }
 
@@ -163,6 +165,19 @@ impl Server for ClientHandler {
             .expect("Error sending pos update"); // TODO: better error handling here; this should poison the mutex if sending to any client is an error
 
         // TODO: if this is the first time, set wants_pos_updates and send all known pos
+        if !self.wants_pos_updates {
+            let mut clients = self.clients.lock().unwrap();
+            self.wants_pos_updates = true;
+            let self_id = self.uid;
+            clients.list.get_mut(&self.uid).unwrap().wants_pos_updates = true;
+            for (id, c) in clients.list.iter().filter(|(id, _)| **id != self_id) {
+                let id = *id;
+                let (x, y) = c.pos;
+                self.write_stream
+                    .write_fmt(format_args!("{}", Message::CollabPosSet { id, x, y }))
+                    .unwrap(); // TODO: error handling
+            }
+        }
         debug!("Forwarded {:?} to other clients", msg);
     }
 }
