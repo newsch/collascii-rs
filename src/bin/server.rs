@@ -151,6 +151,15 @@ impl Server for ClientHandler {
         let msg = Message::CharSet { x, y, c };
 
         let mut clients = self.clients.lock().unwrap();
+
+        self.clients.list.get_mut(&self.uid).unwrap().pos = (x, y);
+
+        self.clients
+            .lock()
+            .unwrap()
+            .update_pos(self.uid, x, y)
+            .expect("Error sending pos update");
+
         clients.send(self.uid, format_args!("{}", msg)).unwrap();
         debug!("Forwarded {:?} to other clients", msg);
     }
