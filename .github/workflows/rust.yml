@@ -1,4 +1,4 @@
-name: Rust
+name: Rust Build/Test
 
 on: [push]
 
@@ -14,6 +14,6 @@ jobs:
         sudo apt update
         sudo apt install libncurses5-dev -y
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --lib --bins --examples --verbose
     - name: Run tests
       run: cargo test --verbose
