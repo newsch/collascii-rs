@@ -4,4 +4,4 @@ This is the beginnings of a rewrite of [`collascii`](https://github.com/olin/col
 
 At this point the only interesting pieces are in [`examples/`](examples/) (which you [_can_ install with `cargo install collascii --example $foo`](https://doc.rust-lang.org/cargo/commands/cargo-install.html#option-cargo-install---example).
 
-This repository began life as a branch on the collascii repo.
+This repository began life as a branch on [the original collascii repo](https://github.com/olin/collascii), but has since been reworked into an independent (orphaned) history.
