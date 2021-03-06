@@ -1,13 +1,16 @@
 [package]
-name = "collascii"
-version = "0.1.0"
 authors = ["Evan New-Schmidt <evan@new-schmidt.com>"]
+description = "A collaborative ascii art editor"
 edition = "2018"
+license = "AGPL-3.0-or-later"
+name = "collascii"
+repository = "https://github.com/newsch/collascii-rs/"
+version = "0.1.0"
 
 [dependencies]
-pancurses = "*"
-log = "*"
+anyhow = "1.*"
 env_logger = "*"
+log = "*"
+pancurses = "*"
 structopt = "*"
 thiserror = "1.*"
-anyhow = "1.*"
