@@ -1,19 +1,20 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, prelude::*};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::{collections::HashMap, io::BufReader};
 
 use anyhow;
 use env_logger;
 use log::{debug, info, warn};
 use structopt::StructOpt;
 
-use collascii::canvas::Canvas;
-use collascii::network::{Message, ParseMessageError, Version, DEFAULT_PORT};
-
-const PROTOCOL_VERSION: Version = Version::new(1, 0);
+use collascii::network::{Message, DEFAULT_PORT};
+use collascii::{
+    canvas::Canvas,
+    network::{ProtocolError, Server},
+};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -48,7 +49,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     let opt = Opt::from_args();
-    println!("{:?}", opt);
 
     let mut canvas = Canvas::new(opt.width, opt.height);
     info!("Initial canvas size {}x{}", canvas.width(), canvas.height());
@@ -58,7 +58,7 @@ fn main() -> anyhow::Result<()> {
     let canvas = Arc::new(Mutex::new(canvas));
     let clients = Arc::new(Mutex::new(Clients::new()));
 
-    let listener = TcpListener::bind((&opt.host[..], opt.port))?;
+    let listener = TcpListener::bind((opt.host.as_ref(), opt.port))?;
 
     info!("Listening at {}", listener.local_addr().unwrap());
 
@@ -67,73 +67,85 @@ fn main() -> anyhow::Result<()> {
         let (stream, addr) = listener.accept().unwrap();
         let uid = clients.lock().unwrap().add(stream.try_clone().unwrap());
         info!("New client {} ({})", uid, addr);
-        let canvas = canvas.clone();
-        let clients = clients.clone();
 
-        thread::spawn(move || {
-            match handle_stream(uid, stream, &canvas, &clients) {
-                Ok(()) => info!("Client {} left", uid),
-                Err(e) => warn!("Client {} disconnected: {}", uid, e),
-            }
-            clients.lock().unwrap().remove(uid);
+        let handler = ClientConnection::new(uid, stream, &canvas, &clients);
+
+        thread::spawn(move || match handler.run() {
+            Ok(()) => info!("Client {} left", uid),
+            Err(e) => warn!("Client {} disconnected: {}", uid, e),
         });
     }
 }
 
-/// Manage a socket connection to the server.
-///
-/// Returns when the connection ends.
-fn handle_stream(
+/// A managed a socket connection to the server.
+struct ClientConnection {
     uid: ClientUid,
-    mut stream: TcpStream,
-    canvas: &Mutex<Canvas>,
-    clients: &Mutex<Clients>,
-) -> Result<(), ParseMessageError> {
-    // for each client:
-    // - check protocol version
-    // - send canvas
-    // - on message received, interpret, modify, and forward
+    input: BufReader<TcpStream>,
+    output: TcpStream,
+    canvas: Arc<Mutex<Canvas>>,
+    clients: Arc<Mutex<Clients>>,
+}
 
-    let mut read_stream = io::BufReader::new(stream.try_clone().unwrap());
-
-    // protocol version negotiation
-    let _version = {
-        let msg = Message::from_reader(&mut read_stream)?;
-        if let Message::VersionReq { v } = msg {
-            // set version
-            if v != PROTOCOL_VERSION {
-                stream.write_all(b"Unknown version\n")?;
-                panic!("Unknown version");
-            }
-            stream.write_fmt(format_args!("{}", Message::VersionAck))?;
-            v
-        } else {
-            panic!("Expected version statement");
-        }
-    };
-
-    // send current canvas to new client
-    {
-        let c = canvas.lock().unwrap();
-        let msg = Message::CanvasSet { c: c.clone() };
-        stream.write_fmt(format_args!("{}", msg))?;
+impl Write for ClientConnection {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.output.write(buf)
     }
 
-    // main loop
-    loop {
-        let msg = Message::from_reader(&mut read_stream)?;
-        debug!("Parsed message from input stream: {:?}", msg);
-        use Message::*;
-        match msg {
-            Quit => {
-                // stop and exit
-                clients.lock().unwrap().remove(uid);
-                return Ok(());
-            }
-            CharSet { y, x, c } => {
-                // update canvas and broadcast to others
-                {
-                    let mut canvas = canvas.lock().unwrap();
+    fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
+    }
+}
+
+impl Read for ClientConnection {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.input.read(buf)
+    }
+}
+
+impl BufRead for ClientConnection {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.input.fill_buf()
+    }
+    fn consume(&mut self, amt: usize) {
+        self.input.consume(amt)
+    }
+}
+
+impl Server for ClientConnection {
+    fn get_canvas(&self) -> Canvas {
+        self.canvas.lock().unwrap().clone()
+    }
+}
+
+impl ClientConnection {
+    fn new(
+        uid: ClientUid,
+        stream: TcpStream,
+        canvas: &Arc<Mutex<Canvas>>,
+        clients: &Arc<Mutex<Clients>>,
+    ) -> Self {
+        let output = stream.try_clone().unwrap();
+        let input = BufReader::new(stream);
+
+        let canvas = canvas.clone();
+        let clients = clients.clone();
+
+        Self {
+            uid,
+            input,
+            output,
+            canvas,
+            clients,
+        }
+    }
+
+    /// Run the client connection to completion
+    fn run(mut self) -> Result<(), ProtocolError> {
+        self.init_connection()?;
+        loop {
+            match self.check_for_update() {
+                Ok((x, y, c)) => {
+                    let mut canvas = self.canvas.lock().unwrap();
                     if canvas.is_in(x, y) {
                         canvas.set(x, y, c);
                         debug!("Set {:?} to {:?} on local canvas", (x, y), c);
@@ -143,18 +155,23 @@ fn handle_stream(
                             (x, y),
                             (canvas.width(), canvas.height())
                         );
+                        continue;
                     }
-                }
 
-                let mut clients = clients.lock().unwrap();
-                clients.send(uid, format_args!("{}", msg))?;
-                debug!("Forwarded {:?} to other clients", msg);
+                    let msg = Message::CharSet { x, y, c };
+                    let mut clients = self.clients.lock().unwrap();
+                    clients.send(self.uid, format_args!("{}", msg))?;
+                    debug!("Forwarded {:?} to other clients", msg);
+                }
+                Err(e) => {
+                    self.clients.lock().unwrap().remove(self.uid);
+
+                    return match e {
+                        ProtocolError::Quit => Ok(()),
+                        e => Err(e),
+                    };
+                }
             }
-            CanvasSet { c: _ } => {
-                // swap canvas, broadcast to others
-                unimplemented!()
-            }
-            m => panic!("Unexpected message: {:?}", m), // TODO: move this to a result
         }
     }
 }
@@ -172,14 +189,6 @@ impl Clients {
         Clients {
             list: HashMap::new(),
         }
-    }
-
-    /// Send a message to all clients
-    pub fn broadcast(&mut self, msg: fmt::Arguments) -> io::Result<()> {
-        for (_uid, stream) in self.list.iter_mut() {
-            stream.write_fmt(msg)?
-        }
-        Ok(())
     }
 
     /// Send a message to all clients but one (usually the sender)
