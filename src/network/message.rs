@@ -88,6 +88,8 @@ pub enum ParseMessageError {
     FormatError(String),
     #[error("Unknown prefix: {0:?}")]
     UnknownPrefix(String),
+    #[error("Connection closed")]
+    Closed,
 }
 
 /// A message sent between instances to modify a shared canvas.
@@ -211,9 +213,9 @@ impl Message {
         use ParseMessageError::*;
 
         let mut line = String::new();
-        let _size = source.read_line(&mut line)?;
-        if line.len() == 0 {
-            return Err(FormatError(line.to_owned()));
+        let size = source.read_line(&mut line)?;
+        if size == 0 {
+            return Err(Closed);
         }
         let line = line
             .strip_suffix('\n')
