@@ -1,59 +1,25 @@
 //! Output the contents of a collascii server's canvas
-use std::io::{self, stdout, BufRead, BufReader, Read, Write};
+use std::io::{self, stdout, Write};
 use std::net::{self, TcpStream};
 
 use anyhow::{Context, Result};
 use structopt::StructOpt;
 
-use collascii::{
-    network::{Client, ProtocolError, DEFAULT_PORT},
-    Canvas,
-};
+use collascii::{Canvas, network::{Client, TcpClient, DEFAULT_PORT, ProtocolError}};
 
 /// On connection, returns the canvas and closes the connection.
-pub struct Dumper {
-    input: BufReader<TcpStream>,
-    output: TcpStream,
-}
+pub struct Dumper(TcpClient);
 
 impl Dumper {
     pub fn connect<A: net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
         let stream = TcpStream::connect(addr)?;
-        let output = stream.try_clone()?;
-        let input = BufReader::new(stream);
-        Ok(Self { input, output })
+        Ok(Self(TcpClient::new(stream)?))
     }
 
     pub fn run(&mut self) -> Result<Canvas, ProtocolError> {
-        self.init_connection()
+        self.0.init_connection()
     }
 }
-
-impl Write for Dumper {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.output.write(buf)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.output.flush()
-    }
-}
-
-impl Read for Dumper {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.input.read(buf)
-    }
-}
-
-impl BufRead for Dumper {
-    fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        self.input.fill_buf()
-    }
-    fn consume(&mut self, amt: usize) {
-        self.input.consume(amt)
-    }
-}
-
-impl Client for Dumper {}
 
 #[derive(Debug, StructOpt)]
 #[structopt(

@@ -5,6 +5,8 @@ use thiserror::Error;
 use crate::canvas::Canvas;
 use crate::network::{Message, Messenger, ParseMessageError, Version};
 
+use super::TcpMessenger;
+
 pub const DEFAULT_PORT: &str = "45011";
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
 
@@ -21,6 +23,9 @@ pub enum ProtocolError {
     #[error("Client quit")]
     Quit,
 }
+
+pub type TcpClient = TcpMessenger;
+impl Client for TcpClient {}
 
 pub trait Client: Messenger {
     fn init_connection(&mut self) -> Result<Canvas, ProtocolError> {

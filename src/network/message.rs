@@ -1,5 +1,5 @@
 //! Network protocol-related structures
-use std::fmt;
+use std::{fmt, io::{BufReader, Read}, net::{self, TcpStream}};
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::io::{self, BufRead, Write};
@@ -449,5 +449,53 @@ where
 
     fn get_msg(&mut self) -> Result<Message, ParseMessageError> {
         Message::from_reader(self)
+    }
+}
+
+/// Wrapper around a [`TcpStream`] that supports BufRead + Write
+pub struct TcpMessenger {
+    output: TcpStream,
+    input: BufReader<TcpStream>,
+}
+
+impl TcpMessenger {
+    pub fn connect<A: net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
+        let stream = TcpStream::connect(addr)?;
+        Self::new(stream)
+    }
+
+    pub fn new(stream: TcpStream) -> io::Result<Self>{
+        let output = stream.try_clone()?;
+        let input = BufReader::new(stream);
+        Ok(Self {
+            output,
+            input,
+        })
+    }
+}
+
+impl Read for TcpMessenger {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.input.read(buf)
+    }
+}
+
+impl BufRead for TcpMessenger {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.input.fill_buf()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.input.consume(amt)
+    }
+}
+
+impl Write for TcpMessenger {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.output.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.output.flush()
     }
 }
