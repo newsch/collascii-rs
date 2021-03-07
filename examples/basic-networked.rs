@@ -19,7 +19,7 @@ use log::{debug, log_enabled};
 
 const PROTOCOL_VERSION: Version = Version::new(1, 0);
 const HOST: &str = "localhost";
-const PORT: u16 = 5000;
+const PORT: u16 = 45011;
 
 fn main() {
     env_logger::init();
@@ -99,7 +99,9 @@ fn main() {
                 let m = Message::from_reader(&mut reader);
                 match m {
                     Ok(Message::CharSet { x, y, c }) => {
-                        window.addch(c);
+                        // update display
+                        window.mv(y as i32, x as i32);
+                        window.addch(c); // moves 1 to the right
                         window.mv(y as i32, x as i32);
                         // update canvas
                         canvas.set(x as usize, y as usize, c);

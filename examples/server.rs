@@ -30,6 +30,13 @@ use collascii::{
     network::{ProtocolError, Server},
 };
 
+const WELCOME_MSG: &str = "\
++----------------------------------+\n\
+| Welcome to the collascii server! |\n\
+|      (you can erase this)        |\n\
++----------------------------------+\n\
+";
+
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "collascii-server",
@@ -52,6 +59,10 @@ struct Opt {
     /// IP/hostname to listen on
     #[structopt(long, default_value = "127.0.0.1")]
     host: String,
+
+    /// Don't add a welcome message to the canvas
+    #[structopt(short, long)]
+    blank: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -67,7 +78,9 @@ fn main() -> anyhow::Result<()> {
     let mut canvas = Canvas::new(opt.width, opt.height);
     info!("Initial canvas size {}x{}", canvas.width(), canvas.height());
 
-    canvas.insert("foobar");
+    if !opt.blank {
+        canvas.insert(WELCOME_MSG);
+    }
 
     let canvas = Arc::new(Mutex::new(canvas));
     let clients = Arc::new(Mutex::new(Clients::new()));
