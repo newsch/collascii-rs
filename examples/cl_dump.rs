@@ -1,3 +1,4 @@
+//! Output the contents of a collascii server's canvas
 use std::io::{self, stdout, BufRead, BufReader, Read, Write};
 use std::net::{self, TcpStream};
 

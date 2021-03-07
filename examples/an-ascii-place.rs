@@ -1,6 +1,6 @@
 //! An Ascii Place
 //!
-//! An example of using the collascii Server trait.
+//! An example of (kind of mis)using the collascii Server trait.
 //!
 //! A server that lets each client place only a single character within a given time period.
 //! Think Reddit's "The Place", but less scalable and in ascii.

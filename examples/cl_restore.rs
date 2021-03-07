@@ -1,3 +1,4 @@
+//! Copy the contents of a file to a collascii server's canvas
 use std::fs;
 use std::io::{self, stdin, BufRead, BufReader, Read, Write};
 use std::net::{self, TcpStream};

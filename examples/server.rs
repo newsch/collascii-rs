@@ -1,3 +1,17 @@
+//! Collascii server
+//!
+//! A multi-threaded, async-less server that uses shared mutexes to handle updates
+//! This design mostly matches that of [the initial C collascii server](https://github.com/olin/collascii/blob/v1.1/src/server.c):
+//! - shared global canvas (guarded by a mutex)
+//! - shared global collection of all client sockets and unique identifiers (guarded by a mutex)
+//! - the main/initial process watches for new connections, and for each one:
+//!     1. adds the socket and an identifier to the shared list
+//!     2. starts a thread with a copy of the socket, identifier and reference to the shared canvas and client collection
+//! - each client socket connection has a single thread that:
+//!     - performs blocking reads directly from the socket to parse commands
+//!     - reads/writes to the shared canvas directly
+//!     - passes updates to other clients by using the shared list to write messages directly to each socket
+//!     - removes itself from the shared client collection on error or close, then exits
 use std::fmt;
 use std::io::{self, prelude::*};
 use std::net::{TcpListener, TcpStream};

@@ -1,5 +1,6 @@
-//! A quick example of a collascii-like curses interface.
+//! A quick example of a networked curses interface.
 //!
+//! TODO: use client trait for connection
 //! TODO: print debug messages to bottom of screen
 
 extern crate env_logger;

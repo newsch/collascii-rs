@@ -1,4 +1,4 @@
-//! A quick example of a collascii-like curses interface.
+//! A quick example of a curses interface that uses an internal canvas but is not networked.
 //!
 //! TODO: print debug messages to bottom of screen
 
